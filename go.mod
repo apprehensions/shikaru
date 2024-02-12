@@ -3,6 +3,7 @@ module github.com/vinegarhq/shikaru
 go 1.21.6
 
 require (
+	github.com/BurntSushi/toml v1.3.2
 	github.com/diamondburned/arikawa/v3 v3.3.4
 	gopkg.in/yaml.v3 v3.0.1
 )

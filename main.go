@@ -3,29 +3,32 @@ package main
 import (
 	"context"
 	"flag"
-	"strings"
 	"log"
 	"os"
 	"os/signal"
+	"regexp"
 	"syscall"
 
-	"gopkg.in/yaml.v3"
 	"github.com/diamondburned/arikawa/v3/gateway"
 	"github.com/diamondburned/arikawa/v3/state"
+	"github.com/BurntSushi/toml"
 )
 
-type Filter struct {
-	Match []string `yaml:"match"`
-	Send  string   `yaml:"send"`
+type Config struct {
+	Token   string   `toml:"token"`
+	Filters []struct {
+		Pattern string `toml:"pattern"`
+		Message string `toml:"message"`
+	} `toml:"filter"`
 }
 
-type Config struct {
-	Token   string   `yaml:"token"`
-	Filters []Filter `yaml:"filters"`
+type Filter struct {
+	Pattern *regexp.Regexp
+	Message string
 }
 
 func main() {
-	configPath := flag.String("config", "shikaru.yaml", "config file path")
+	configPath := flag.String("config", "shikaru.toml", "config file path")
 	flag.Parse()
 
 	cfg, err := loadConfig(*configPath)
@@ -33,19 +36,34 @@ func main() {
 		log.Fatalln("load config:", err)
 	}
 
+	var fs []Filter
+	for _, f := range cfg.Filters {
+		if f.Message == "" {
+			log.Fatalf("filter %s message is empty", f)
+		}
+
+		r, err := regexp.Compile(f.Pattern)
+		if err != nil {
+			log.Fatalf("filter %s compile: %s", f, err)
+		}
+
+		fs = append(fs, Filter{
+			Pattern: r,
+			Message: f.Message,
+		})
+	}
+
 	s := state.New("Bot " + cfg.Token)
 	s.AddIntents(gateway.IntentGuildMessages)
 	s.AddHandler(func(c *gateway.MessageCreateEvent) {
-		for _, f := range cfg.Filters {
-			for _, m := range f.Match {
-				if !strings.Contains(c.Content, m) {
-					return
-				}
+		for _, f := range fs {
+			if !f.Pattern.MatchString(c.Content) {
+				continue
 			}
 
 			log.Println(c.Author.Username, "sent", c.Content)
 
-			_, err := s.SendMessageReply(c.ChannelID, f.Send, c.ID)
+			_, err := s.SendMessageReply(c.ChannelID, f.Message, c.ID)
 			if err != nil {
 				log.Fatalf("send message reply %s: %s", c.ID, err)
 			}
@@ -66,13 +84,9 @@ func main() {
 }
 
 func loadConfig(name string) (*Config, error) {
-	f, err := os.ReadFile(name)
-	if err != nil {
-		return nil, err
-	}
-
 	var cfg Config
-	if err := yaml.Unmarshal(f, &cfg); err != nil {
+	
+	if _, err := toml.DecodeFile(name, &cfg); err != nil {
 		return nil, err
 	}
 
